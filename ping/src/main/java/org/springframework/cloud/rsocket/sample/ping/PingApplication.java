@@ -20,10 +20,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.cloud.gateway.rsocket.support.Metadata;
-import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.codec.CharSequenceEncoder;
 import org.springframework.core.codec.StringDecoder;
@@ -62,7 +63,7 @@ public class PingApplication {
 
 	@Component
 	@Slf4j
-	public static class Ping implements SmartLifecycle {
+	public static class Ping implements ApplicationRunner {
 
 		private final Environment env;
 		private final MeterRegistry meterRegistry;
@@ -84,19 +85,8 @@ public class PingApplication {
 		}
 
 		@Override
-		public void stop() {
-			if (this.running.compareAndSet(true, false) && this.rSocket != null) {
-				this.rSocket.dispose();
-			}
-		}
+		public void run(ApplicationArguments args) throws Exception {
 
-		@Override
-		public boolean isRunning() {
-			return this.running.get();
-		}
-
-		@Override
-		public void start() {
 			if (this.running.compareAndSet(false, true)) {
 
 				String requestType = env
