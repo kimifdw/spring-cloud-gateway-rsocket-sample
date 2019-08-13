@@ -19,14 +19,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.cloud.gateway.rsocket.support.Metadata;
+import org.springframework.cloud.gateway.rsocket.support.RouteSetup;
 import org.springframework.context.ApplicationListener;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.Environment;
+import org.springframework.messaging.rsocket.MetadataExtractor;
+import org.springframework.messaging.rsocket.RSocketRequester;
 import org.springframework.stereotype.Component;
 
 import static io.netty.buffer.Unpooled.EMPTY_BUFFER;
@@ -42,16 +44,18 @@ public class PingApplication {
 	@Slf4j
 	public static class Ping implements ApplicationListener<ApplicationReadyEvent> {
 
-		@Autowired
 		private MeterRegistry meterRegistry;
+		private final RSocketRequester.Builder requesterBuilder;
 
 		private final String id;
 
 		private final AtomicInteger pongsReceived = new AtomicInteger();
 		private Flux<String> pongFlux;
 
-		public Ping(Environment env) {
+		public Ping(Environment env, MeterRegistry meterRegistry, RSocketRequester.Builder requesterBuilder) {
 			this.id = env.getProperty("ping.id", "1");
+			this.meterRegistry = meterRegistry;
+			this.requesterBuilder = requesterBuilder;
 		}
 
 		@Override
@@ -66,17 +70,30 @@ public class PingApplication {
 
 			MicrometerRSocketInterceptor interceptor = new MicrometerRSocketInterceptor(meterRegistry, Tag
 					.of("component", "ping"));
-			ByteBuf announcementMetadata = Metadata.from("ping").with("id", "ping"+id).encode();
+			//ByteBuf announcementMetadata = Metadata.from("ping").with("id", "ping"+id).encode();
 
-			Function<RSocket, Publisher<String>> handler;
+			/*Function<RSocket, Publisher<String>> handler;
 			if (requestType.equals("request-response")) {
 				handler = this::handleRequestResponse;
 			} else {
 				handler = this::handleRequestChannel;
-			}
+			}*/
 
-			pongFlux = RSocketFactory.connect()
-					.metadataMimeType(Metadata.ROUTING_MIME_TYPE)
+			RSocketRequester requester = requesterBuilder
+					.connectTcp("localhost", serverPort).block();
+
+			RouteSetup metadata = new RouteSetup(Metadata.from("ping")
+					.with("id", "ping" + id).build());
+
+			Flux.interval(Duration.ofSeconds(1))
+					.flatMap(i -> requester.metadata(metadata, RouteSetup.ROUTE_SETUP_MIME_TYPE)
+							.data("ping" + i)
+							.retrieveMono(String.class)
+							.doOnNext(this::logPongs))
+					.subscribe();
+
+			/*pongFlux = RSocketFactory.connect()
+					.metadataMimeType(MetadataExtractor.COMPOSITE_METADATA)
 					.setupPayload(DefaultPayload
 							.create(EMPTY_BUFFER, announcementMetadata))
 					.addClientPlugin(interceptor)
@@ -84,10 +101,10 @@ public class PingApplication {
 					.start()
 					.flatMapMany(handler);
 
-			pongFlux.subscribe();
+			pongFlux.subscribe();*/
 		}
 
-		private Flux<String> handleRequestResponse(RSocket rSocket) {
+		/*private Flux<String> handleRequestResponse(RSocket rSocket) {
 			return Flux.interval(Duration.ofSeconds(1))
 					.flatMap(i -> rSocket.requestResponse(getPayload(i))
 							.map(Payload::getDataUtf8)
@@ -112,7 +129,7 @@ public class PingApplication {
 					.writeUtf8(ByteBufAllocator.DEFAULT, "ping" + id);
 			ByteBuf routingMetadata = Metadata.from("pong").encode();
 			return DefaultPayload.create(data, routingMetadata);
-		}
+		}*/
 
 		private void logPongs(String payload) {
 			int received = pongsReceived.incrementAndGet();

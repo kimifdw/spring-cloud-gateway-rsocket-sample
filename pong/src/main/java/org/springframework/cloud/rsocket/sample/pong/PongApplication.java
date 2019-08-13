@@ -28,6 +28,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.cloud.gateway.rsocket.support.Metadata;
+import org.springframework.cloud.gateway.rsocket.support.RouteSetup;
 import org.springframework.context.ApplicationListener;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.Environment;
@@ -82,10 +83,12 @@ public class PongApplication {
 					Integer.class, 7002);
 			MicrometerRSocketInterceptor interceptor = new MicrometerRSocketInterceptor(meterRegistry, Tag
 					.of("component", "pong"));
-			ByteBuf announcementMetadata = Metadata.from("pong").with("id", "pong" + id).encode();
+			//ByteBuf announcementMetadata = Metadata.from("pong").with("id", "pong" + id).encode();
 
 			if (isClient) {
-				RSocketFactory.connect()
+				RouteSetup metadata = new RouteSetup(Metadata.from("ping")
+						.with("id", "ping" + id).build());
+				/*RSocketFactory.connect()
 						.metadataMimeType(Metadata.ROUTING_MIME_TYPE)
 						.setupPayload(DefaultPayload
 								.create(EMPTY_BUFFER, announcementMetadata))
@@ -93,7 +96,7 @@ public class PongApplication {
 						.acceptor(this)
 						.transport(TcpClientTransport.create(port)) // proxy
 						.start()
-						.block();
+						.block();*/
 			} else { // start server
 				RSocketFactory.receive()
 						.addServerPlugin(interceptor)

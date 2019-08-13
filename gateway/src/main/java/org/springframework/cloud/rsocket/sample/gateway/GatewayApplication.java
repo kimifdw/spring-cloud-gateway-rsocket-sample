@@ -17,6 +17,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.cloud.gateway.rsocket.core.GatewayRSocket;
 import org.springframework.cloud.gateway.rsocket.registry.Registry;
 import org.springframework.cloud.gateway.rsocket.support.Metadata;
+import org.springframework.cloud.gateway.rsocket.support.RouteSetup;
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.env.ConfigurableEnvironment;
@@ -52,7 +53,7 @@ public class GatewayApplication {
 			log.info("Starting Pong Proxy");
 			MicrometerRSocketInterceptor interceptor = new MicrometerRSocketInterceptor(meterRegistry, Tag
 					.of("component", "pongproxy"));
-			ByteBuf announcementMetadata = Metadata.from("pong").with("id", "pongproxy1").encode();
+			/*ByteBuf announcementMetadata = Metadata.from("pong").with("id", "pongproxy1").encode();
 			RSocketFactory.connect()
 					.metadataMimeType(Metadata.ROUTING_MIME_TYPE)
 					.setupPayload(DefaultPayload.create(EMPTY_BUFFER, announcementMetadata))
@@ -60,14 +61,14 @@ public class GatewayApplication {
 					.acceptor(this::accept)
 					.transport(TcpClientTransport.create(7002)) // gateway1
 					.start()
-					.subscribe();
+					.subscribe();*/
 		}
 
 		@SuppressWarnings("Duplicates")
 		RSocket accept(RSocket rSocket) {
-			Metadata metadata = Metadata.from("ping")
+			RouteSetup metadata = new RouteSetup(Metadata.from("ping")
 					.with("id", "pingproxy1")
-					.build();
+					.build());
 
 			registry.register(metadata, rSocket);
 			return rsocketFactory.create(metadata);
