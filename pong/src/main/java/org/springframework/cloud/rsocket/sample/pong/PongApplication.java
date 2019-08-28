@@ -14,7 +14,6 @@ import io.rsocket.RSocket;
 import io.rsocket.RSocketFactory;
 import io.rsocket.SocketAcceptor;
 import io.rsocket.micrometer.MicrometerRSocketInterceptor;
-import io.rsocket.transport.netty.client.TcpClientTransport;
 import io.rsocket.transport.netty.server.TcpServerTransport;
 import io.rsocket.util.DefaultPayload;
 import io.rsocket.util.RSocketProxy;
@@ -23,16 +22,23 @@ import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.boot.rsocket.messaging.RSocketStrategiesCustomizer;
+import org.springframework.cloud.gateway.rsocket.autoconfigure.GatewayRSocketAutoConfiguration;
+import org.springframework.cloud.gateway.rsocket.support.Forwarding;
 import org.springframework.cloud.gateway.rsocket.support.Metadata;
 import org.springframework.cloud.gateway.rsocket.support.RouteSetup;
 import org.springframework.context.ApplicationListener;
+import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.Environment;
-import org.springframework.stereotype.Component;
+import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.rsocket.RSocketRequester;
+import org.springframework.messaging.rsocket.RSocketStrategies;
+import org.springframework.messaging.rsocket.annotation.support.RSocketMessageHandler;
+import org.springframework.stereotype.Controller;
 
 import static io.netty.buffer.Unpooled.EMPTY_BUFFER;
 
@@ -41,6 +47,25 @@ public class PongApplication {
 
 	public static void main(String[] args) {
 		SpringApplication.run(PongApplication.class, args);
+	}
+
+	@Bean
+	//TODO: client module?
+	public RSocketStrategiesCustomizer gatewayRSocketStrategiesCustomizer() {
+		return strategies -> {
+			strategies.decoder(new Forwarding.Decoder(), new RouteSetup.Decoder())
+					.encoder(new Forwarding.Encoder(), new RouteSetup.Encoder());
+		};
+	}
+
+	@Bean
+	public Pong pong(Environment env, MeterRegistry meterRegistry,
+			RSocketRequester.Builder requesterBuilder, RSocketStrategies strategies,
+			RSocketMessageHandler handler) {
+		//TODO: client module
+		GatewayRSocketAutoConfiguration.registerMimeTypes(strategies);
+		requesterBuilder.rsocketFactory(rsocketFactory -> rsocketFactory.acceptor(handler.responder()));
+		return new Pong(env, meterRegistry, requesterBuilder);
 	}
 
 	static String reply(String in) {
@@ -55,20 +80,22 @@ public class PongApplication {
 		}
 	}
 
-	@Component
 	@Slf4j
 	public static class Pong implements ApplicationListener<ApplicationReadyEvent>,
 			SocketAcceptor, Function<RSocket, RSocket> {
 
 		private final String id;
 
-		@Autowired
-		private MeterRegistry meterRegistry;
+		private final MeterRegistry meterRegistry;
+
+		private final RSocketRequester.Builder requesterBuilder;
 
 		private final AtomicInteger pingsReceived = new AtomicInteger();
 
-		public Pong(Environment env) {
+		public Pong(Environment env, MeterRegistry meterRegistry, RSocketRequester.Builder requesterBuilder) {
 			this.id = env.getProperty("pong.id", "1");
+			this.meterRegistry = meterRegistry;
+			this.requesterBuilder = requesterBuilder;
 		}
 
 		@Override
@@ -86,8 +113,11 @@ public class PongApplication {
 			//ByteBuf announcementMetadata = Metadata.from("pong").with("id", "pong" + id).encode();
 
 			if (isClient) {
-				RouteSetup metadata = new RouteSetup(Metadata.from("ping")
-						.with("id", "ping" + id).build());
+				RouteSetup routeSetup = new RouteSetup(Metadata.from("pong")
+						.with("id", "pong" + id).build());
+				requesterBuilder.setupMetadata(routeSetup, RouteSetup.ROUTE_SETUP_MIME_TYPE)
+						.connectTcp("localhost", port)
+						.block();
 				/*RSocketFactory.connect()
 						.metadataMimeType(Metadata.ROUTING_MIME_TYPE)
 						.setupPayload(DefaultPayload
@@ -145,6 +175,28 @@ public class PongApplication {
 				}
 			};
 		}
+	}
+
+	@Slf4j
+	@Controller
+	public static class PongController {
+		private final AtomicInteger pingsReceived = new AtomicInteger();
+
+		public PongController() {
+			System.out.println("here");
+		}
+
+		@MessageMapping("pong-rr")
+		public Mono<String> pong(String ping) {
+			logPings(ping);
+			return Mono.just(reply(ping));
+		}
+
+		private void logPings(String str) {
+			int received = pingsReceived.incrementAndGet();
+			log.info("received " + str + "("+received+") in Pong");
+		}
+
 	}
 
 }

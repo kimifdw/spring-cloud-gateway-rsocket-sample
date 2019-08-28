@@ -1,37 +1,29 @@
 package org.springframework.cloud.rsocket.sample.ping;
 
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufAllocator;
-import io.netty.buffer.ByteBufUtil;
-import io.rsocket.Payload;
-import io.rsocket.RSocket;
-import io.rsocket.RSocketFactory;
 import io.rsocket.micrometer.MicrometerRSocketInterceptor;
-import io.rsocket.transport.netty.client.TcpClientTransport;
-import io.rsocket.util.DefaultPayload;
 import lombok.extern.slf4j.Slf4j;
-import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.boot.rsocket.messaging.RSocketStrategiesCustomizer;
+import org.springframework.cloud.gateway.rsocket.autoconfigure.GatewayRSocketAutoConfiguration;
+import org.springframework.cloud.gateway.rsocket.support.Forwarding;
 import org.springframework.cloud.gateway.rsocket.support.Metadata;
 import org.springframework.cloud.gateway.rsocket.support.RouteSetup;
 import org.springframework.context.ApplicationListener;
+import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.Environment;
-import org.springframework.messaging.rsocket.MetadataExtractor;
 import org.springframework.messaging.rsocket.RSocketRequester;
-import org.springframework.stereotype.Component;
-
-import static io.netty.buffer.Unpooled.EMPTY_BUFFER;
+import org.springframework.messaging.rsocket.RSocketStrategies;
 
 @SpringBootApplication
 public class PingApplication {
@@ -40,7 +32,22 @@ public class PingApplication {
 		SpringApplication.run(PingApplication.class, args);
 	}
 
-	@Component
+	@Bean
+	//TODO: client module?
+	public RSocketStrategiesCustomizer gatewayRSocketStrategiesCustomizer() {
+		return strategies -> {
+			strategies.decoder(new Forwarding.Decoder(), new RouteSetup.Decoder())
+					.encoder(new Forwarding.Encoder(), new RouteSetup.Encoder());
+		};
+	}
+
+	@Bean
+	public Ping ping(Environment env, MeterRegistry meterRegistry, RSocketRequester.Builder requesterBuilder, RSocketStrategies strategies) {
+		//TODO: client module
+		GatewayRSocketAutoConfiguration.registerMimeTypes(strategies);
+		return new Ping(env, meterRegistry, requesterBuilder);
+	}
+
 	@Slf4j
 	public static class Ping implements ApplicationListener<ApplicationReadyEvent> {
 
@@ -79,14 +86,17 @@ public class PingApplication {
 				handler = this::handleRequestChannel;
 			}*/
 
-			RSocketRequester requester = requesterBuilder
-					.connectTcp("localhost", serverPort).block();
-
-			RouteSetup metadata = new RouteSetup(Metadata.from("ping")
+			RouteSetup routeSetup = new RouteSetup(Metadata.from("ping")
 					.with("id", "ping" + id).build());
+			RSocketRequester requester = requesterBuilder
+					.setupMetadata(routeSetup, RouteSetup.ROUTE_SETUP_MIME_TYPE)
+					.connectTcp("localhost", serverPort)
+					.block();
 
+			Forwarding forwarding = new Forwarding("pong", new HashMap<>());
 			Flux.interval(Duration.ofSeconds(1))
-					.flatMap(i -> requester.metadata(metadata, RouteSetup.ROUTE_SETUP_MIME_TYPE)
+					.flatMap(i -> requester.route("pong-rr")
+							.metadata(forwarding, Forwarding.FORWARDING_MIME_TYPE)
 							.data("ping" + i)
 							.retrieveMono(String.class)
 							.doOnNext(this::logPongs))
